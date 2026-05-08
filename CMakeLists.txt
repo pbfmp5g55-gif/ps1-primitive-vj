@@ -27,3 +27,19 @@ if(VJ_BUILD_DEMO)
     add_executable(vj_demo vj/example/demo.cpp)
     target_link_libraries(vj_demo PRIVATE vj)
 endif()
+
+option(VJ_BUILD_TESTS "Build unit tests" ON)
+if(VJ_BUILD_TESTS)
+    enable_testing()
+    set(VJ_TEST_SOURCES
+        vj/tests/test_depth_delay_queue.cpp
+        vj/tests/test_safety_limiter.cpp
+        vj/tests/test_random_controller.cpp
+    )
+    foreach(test_src ${VJ_TEST_SOURCES})
+        get_filename_component(test_name ${test_src} NAME_WE)
+        add_executable(${test_name} ${test_src})
+        target_link_libraries(${test_name} PRIVATE vj)
+        add_test(NAME ${test_name} COMMAND ${test_name})
+    endforeach()
+endif()

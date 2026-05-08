@@ -1,0 +1,56 @@
+name: libvj CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    name: Build & test (Linux, g++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test (ctest)
+        run: ctest --test-dir build --output-on-failure
+      - name: Smoke run demo
+        run: ./build/vj_demo
+
+  build-windows:
+    name: Build & test (Windows, MinGW)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (MinGW Makefiles)
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test (ctest)
+        run: ctest --test-dir build --output-on-failure
+      - name: Smoke run demo
+        shell: pwsh
+        run: ./build/vj_demo.exe
+
+  build-macos:
+    name: Build & test (macOS, clang++)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test (ctest)
+        run: ctest --test-dir build --output-on-failure
+      - name: Smoke run demo
+        run: ./build/vj_demo
