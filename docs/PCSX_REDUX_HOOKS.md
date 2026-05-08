@@ -120,14 +120,84 @@ bit 63     : reserved
 `intercept()` 内で詰め、`write0()` 直前に取り出して `Poly::tpage` 等に書き戻す
 (libvj が明示的に書き換えていなければ no-op)。
 
-## ライフサイクル(beginFrame / endFrame)
+## ライフサイクル(beginFrame / endFrame) — 調査完了 2026-05-08
 
-GPU の VBlank 同期点を探す必要がある。仕様書 §10.1 では「VBlank」と書かれていて、
-PCSX-Redux 側の VBlank ハンドラに `m_vjInterceptor->beginFrame()` / `endFrame()` を
-呼ぶフックを追加する。
+### 結論: `Events::GPU::VSync` を EventBus 経由で listen する
 
-候補ファイル: `src/core/psxcounters.cc`(VBlank counter)、
-または `src/core/display.cc`(画面 swap)。次回の実調査で特定する。
+PCSX-Redux には既に **EventBus に lifecycle イベントが流れている**。これに乗るのが
+最もクリーン(GPULogger も同じ手法)。
+
+### Event 定義
+
+`src/core/system.h:70-72`:
+
+```cpp
+namespace Events {
+    namespace GPU {
+        struct VSync {};
+    }
+}
+```
+
+### Event 発火点
+
+`src/core/psxemulator.cc:177-181`:
+
+```cpp
+void PCSX::Emulator::vsync() {
+    m_gpu->vblank();                                            // renderer present
+    g_system->m_eventBus->signal<Events::GPU::VSync>({});       // ← 我々が listen するイベント
+    g_system->update(true);
+}
+```
+
+**重要**: VSync signal は **renderer の `vblank()` (=present) の後** に発火する。
+つまり「フレームが完成して画面に出た直後」のタイミング。
+
+### libvj 側のマッピング
+
+| libvj ライフサイクル | 呼ぶタイミング |
+|---|---|
+| `interceptor->beginFrame(params, estPrimCount)` | サブシステム初期化時に1回 + VSync イベント毎 |
+| `interceptor->interceptAndSubmit(prim)` | gpu.cc の primitive hook 3 箇所 |
+| `interceptor->endFrame()` | VSync イベント毎(beginFrame の直前) |
+
+VSync ハンドラ内擬似コード:
+
+```cpp
+m_listener.listen<Events::GPU::VSync>([this](auto event) {
+    g_vjInterceptor->endFrame();                                // 旧フレーム終了
+    Params p = pollMidi();                                      // 最新 MIDI スナップショット
+    g_vjInterceptor->beginFrame(p, m_lastFramePrimCount);       // 新フレーム開始
+    m_lastFramePrimCount = m_thisFramePrimCount;                // 計測値繰り越し
+    m_thisFramePrimCount = 0;
+});
+```
+
+### depth delay の意味付けの注意
+
+VSync は present の **後** に発火するので、`endFrame()` で flush される
+DepthDelayQueue 内の primitive は **次フレーム** の描画キューに乗る(depth delay の本来の挙動と一致)。
+仕様書 §10.4 の「depth として primitive submission 連番を使う」案と整合。
+
+### 既存リスナーとの並走
+
+VSync を listen している既存箇所(参考):
+
+- `src/core/gpulogger.cc:64` — frame counter +1
+- `src/gui/widgets/memory_observer.cc:36` — メモリ可視化更新
+- `src/core/eventslua.cc:189` — Lua bindings 経由
+
+新規追加する libvj リスナーは独立、相互干渉なし。
+
+### Phase 4 着手時の具体作業
+
+1. `psxemulator.h` に `std::unique_ptr<vj::PrimitiveInterceptor> m_vjInterceptor` 追加
+2. `psxemulator.h` に `EventBus::Listener m_vjListener` 追加 (or `vj_bridge.cc` 内に static で持つ)
+3. `psxemulator.cc` のコンストラクタで `m_vjInterceptor = std::make_unique<vj::PrimitiveInterceptor>();`
+4. 同 `m_vjListener.listen<Events::GPU::VSync>(...)` で endFrame/beginFrame 配線
+5. `vj_bridge.cc` を Phase 3 logging 実装から Phase 4 PCSX→vj 詰め替え実装に差し替え
+6. 各 `onPrimitive(*this)` 呼び出し点で interceptor を経由して書き戻し
 
 ## VJ サブシステムのインスタンス化箇所
 
