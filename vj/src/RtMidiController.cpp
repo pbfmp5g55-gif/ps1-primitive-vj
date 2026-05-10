@@ -55,10 +55,14 @@ void RtMidiController::handleMessage(const std::vector<unsigned char>& msg) {
 
 std::vector<std::string> RtMidiController::listPorts() {
     std::vector<std::string> out;
-    RtMidiIn probe(RtMidi::Api::UNSPECIFIED, "ps1-primitive-vj-probe");
-    const unsigned int n = probe.getPortCount();
-    out.reserve(n);
-    for (unsigned int i = 0; i < n; ++i) out.push_back(probe.getPortName(i));
+    try {
+        RtMidiIn probe(RtMidi::Api::UNSPECIFIED, "ps1-primitive-vj-probe");
+        const unsigned int n = probe.getPortCount();
+        out.reserve(n);
+        for (unsigned int i = 0; i < n; ++i) out.push_back(probe.getPortName(i));
+    } catch (const RtMidiError&) {
+        // No usable MIDI backend (e.g. CI runner with no ALSA seq device) — treat as empty.
+    }
     return out;
 }
 
