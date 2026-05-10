@@ -13,26 +13,40 @@ concurrency:
 
 jobs:
   build-linux:
-    name: Build & test (Linux, g++)
+    name: Build & test (Linux, g++, RtMidi=${{ matrix.rtmidi }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rtmidi: [OFF, ON]
     steps:
       - uses: actions/checkout@v4
+      - name: Install ALSA dev (RtMidi)
+        if: matrix.rtmidi == 'ON'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVJ_ENABLE_RTMIDI=${{ matrix.rtmidi }}
       - name: Build
         run: cmake --build build --parallel
       - name: Test (ctest)
         run: ctest --test-dir build --output-on-failure
       - name: Smoke run demo
         run: ./build/vj_demo
+      - name: Smoke --list-midi
+        if: matrix.rtmidi == 'ON'
+        run: ./build/vj_demo --list-midi
 
   build-windows:
-    name: Build & test (Windows, MinGW)
+    name: Build & test (Windows, MinGW, RtMidi=${{ matrix.rtmidi }})
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        rtmidi: [OFF, ON]
     steps:
       - uses: actions/checkout@v4
       - name: Configure (MinGW Makefiles)
-        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Debug -DVJ_ENABLE_RTMIDI=${{ matrix.rtmidi }}
       - name: Build
         run: cmake --build build --parallel
       - name: Test (ctest)
@@ -40,17 +54,28 @@ jobs:
       - name: Smoke run demo
         shell: pwsh
         run: ./build/vj_demo.exe
+      - name: Smoke --list-midi
+        if: matrix.rtmidi == 'ON'
+        shell: pwsh
+        run: ./build/vj_demo.exe --list-midi
 
   build-macos:
-    name: Build & test (macOS, clang++)
+    name: Build & test (macOS, clang++, RtMidi=${{ matrix.rtmidi }})
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rtmidi: [OFF, ON]
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DVJ_ENABLE_RTMIDI=${{ matrix.rtmidi }}
       - name: Build
         run: cmake --build build --parallel
       - name: Test (ctest)
         run: ctest --test-dir build --output-on-failure
       - name: Smoke run demo
         run: ./build/vj_demo
+      - name: Smoke --list-midi
+        if: matrix.rtmidi == 'ON'
+        run: ./build/vj_demo --list-midi

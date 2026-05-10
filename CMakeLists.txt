@@ -22,6 +22,23 @@ add_library(vj STATIC
 )
 target_include_directories(vj PUBLIC vj/include)
 
+option(VJ_ENABLE_RTMIDI "Build RtMidi-backed MidiController (host-side use; pulls RtMidi 6.0.0 via FetchContent)" OFF)
+if(VJ_ENABLE_RTMIDI)
+    include(FetchContent)
+    set(RTMIDI_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(RTMIDI_BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+    set(RTMIDI_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        rtmidi
+        GIT_REPOSITORY https://github.com/thestk/rtmidi.git
+        GIT_TAG        6.0.0
+    )
+    FetchContent_MakeAvailable(rtmidi)
+    target_sources(vj PRIVATE vj/src/RtMidiController.cpp)
+    target_link_libraries(vj PUBLIC rtmidi)
+    target_compile_definitions(vj PUBLIC VJ_HAS_RTMIDI=1)
+endif()
+
 option(VJ_BUILD_DEMO "Build the standalone demo executable" ON)
 if(VJ_BUILD_DEMO)
     add_executable(vj_demo vj/example/demo.cpp)

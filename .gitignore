@@ -1,5 +1,7 @@
 build/
+build-*/
 out/
+*.log
 *.o
 *.obj
 *.a
