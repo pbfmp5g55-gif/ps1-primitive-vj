@@ -37,7 +37,9 @@ private:
     DepthDelayQueue m_depthQueue;
     SubmitFn m_submit;
     int m_affectedCount = 0;
+    int m_filterCounter = 0;
 
+    bool passesFilter(const PrimitiveContext& ctx);
     bool shouldAffect(const PrimitiveContext& ctx);
     void applyGeometry(Primitive& prim, const PrimitiveContext& ctx);
     void applyTexture(Primitive& prim, const PrimitiveContext& ctx);

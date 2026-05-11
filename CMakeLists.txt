@@ -52,6 +52,7 @@ if(VJ_BUILD_TESTS)
         vj/tests/test_depth_delay_queue.cpp
         vj/tests/test_safety_limiter.cpp
         vj/tests/test_random_controller.cpp
+        vj/tests/test_primitive_interceptor_filter.cpp
     )
     foreach(test_src ${VJ_TEST_SOURCES})
         get_filename_component(test_name ${test_src} NAME_WE)

@@ -25,6 +25,7 @@ void PrimitiveInterceptor::beginFrame(const Params& params, int estimatedPrimiti
     m_rand.update(m_params.chaos);
     m_limiter.beginFrame(estimatedPrimitiveCount);
     m_affectedCount = 0;
+    m_filterCounter = 0;
 }
 
 void PrimitiveInterceptor::endFrame() {
@@ -35,7 +36,23 @@ void PrimitiveInterceptor::rawSubmit(const Primitive& prim) {
     if (m_submit) m_submit(prim);
 }
 
+bool PrimitiveInterceptor::passesFilter(const PrimitiveContext& ctx) {
+    const auto& f = m_params.filter;
+    if (f.texturedOnly && !ctx.textured) return false;
+    if (f.minArea > 0.0f && ctx.screenArea < f.minArea) return false;
+    if (f.maxArea > 0.0f && ctx.screenArea > f.maxArea) return false;
+    const bool regionEnabled = (f.regionX1 > f.regionX0) && (f.regionY1 > f.regionY0);
+    if (regionEnabled) {
+        if (ctx.centerX < f.regionX0 || ctx.centerX > f.regionX1) return false;
+        if (ctx.centerY < f.regionY0 || ctx.centerY > f.regionY1) return false;
+    }
+    if (f.everyN > 0 && (m_filterCounter % f.everyN) != 0) return false;
+    return true;
+}
+
 bool PrimitiveInterceptor::shouldAffect(const PrimitiveContext& ctx) {
+    m_filterCounter++;
+    if (!passesFilter(ctx)) return false;
     float p = m_params.chance * ctx.priorityWeight;
     p = std::clamp(p, 0.0f, 0.95f);
     return m_rand.rand01() < p;
