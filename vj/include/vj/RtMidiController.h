@@ -27,6 +27,11 @@ public:
     unsigned int portIndex() const { return m_portIndex; }
     const std::string& portName() const { return m_portName; }
 
+    // Returns the CC number of the most recently received Control Change
+    // message, or -1 if none has been received yet. Used for MIDI Learn.
+    int lastReceivedCC() const { return m_lastCC.load(std::memory_order_relaxed); }
+    void clearLastReceivedCC() { m_lastCC.store(-1, std::memory_order_relaxed); }
+
     static std::vector<std::string> listPorts();
     static int findPortBySubstring(const std::string& needle);
 
@@ -36,6 +41,7 @@ private:
 
     std::unique_ptr<RtMidiIn> m_in;
     std::atomic<int> m_cc[128];
+    std::atomic<int> m_lastCC{-1};
     unsigned int m_portIndex;
     std::string m_portName;
 };

@@ -51,6 +51,7 @@ void RtMidiController::handleMessage(const std::vector<unsigned char>& msg) {
     const int cc    = msg[1] & 0x7F;
     const int value = msg[2] & 0x7F;
     m_cc[cc].store(value, std::memory_order_relaxed);
+    m_lastCC.store(cc, std::memory_order_relaxed);
 }
 
 std::vector<std::string> RtMidiController::listPorts() {
