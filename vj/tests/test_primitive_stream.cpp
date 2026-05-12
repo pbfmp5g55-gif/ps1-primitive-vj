@@ -187,6 +187,114 @@ void test_ringbuffer_drops_oldest_at_capacity() {
     assert(rb.getDelayed(3) == nullptr);
 }
 
+void test_v2_roundtrip_with_uploads() {
+    const std::string path = tempPath("v2uploads");
+    {
+        vj::PrimitiveStreamWriter w;
+        assert(w.open(path));
+        // Frame 0: 1 upload + 2 primitives.
+        w.beginFrame(0, 3);
+        vj::VRAMUpload u;
+        u.x = 64; u.y = 0; u.w = 4; u.h = 2;
+        u.data = {0x1234, 0x5678, 0x9abc, 0xdef0,
+                  0x0fed, 0xcba9, 0x8765, 0x4321};
+        w.writeVRAMUpload(u);
+        w.writePrimitive(makePrim(1));
+        w.writePrimitive(makePrim(2));
+        // Frame 1: 0 uploads + 1 primitive.
+        w.beginFrame(1, 1);
+        w.writePrimitive(makePrim(100));
+        w.close();
+    }
+    {
+        vj::PrimitiveStreamReader r;
+        assert(r.open(path));
+        assert(r.streamVersion() == 2);
+
+        vj::EchoFrame f0;
+        assert(r.readNextFrame(f0));
+        assert(f0.frameIndex == 0);
+        assert(f0.uploads.size() == 1);
+        assert(f0.primitives.size() == 2);
+        assert(f0.uploads[0].x == 64 && f0.uploads[0].y == 0);
+        assert(f0.uploads[0].w == 4 && f0.uploads[0].h == 2);
+        assert(f0.uploads[0].data.size() == 8);
+        assert(f0.uploads[0].data[0] == 0x1234);
+        assert(f0.uploads[0].data[7] == 0x4321);
+        assert(primEqual(f0.primitives[0], makePrim(1)));
+        assert(primEqual(f0.primitives[1], makePrim(2)));
+
+        vj::EchoFrame f1;
+        assert(r.readNextFrame(f1));
+        assert(f1.frameIndex == 1);
+        assert(f1.uploads.empty());
+        assert(f1.primitives.size() == 1);
+        assert(primEqual(f1.primitives[0], makePrim(100)));
+
+        vj::EchoFrame f2;
+        assert(!r.readNextFrame(f2));
+    }
+    std::remove(path.c_str());
+}
+
+void test_v1_backward_compat() {
+    // Build a v1 file by hand: legacy magic + version + a single frame of
+    // two primitives in the v1 layout (no type byte).
+    const std::string path = tempPath("v1compat");
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    assert(f);
+    std::fwrite("VJREC001", 1, 8, f);
+    uint32_t version = 1;
+    std::fwrite(&version, sizeof(version), 1, f);
+    // Frame: marker + frameIdx=7 + primCount=2
+    uint8_t marker[4] = {0xFE, 0xFE, 0xFE, 0xFE};
+    std::fwrite(marker, 1, 4, f);
+    uint32_t frameIdx = 7;
+    uint32_t primCount = 2;
+    std::fwrite(&frameIdx, sizeof(frameIdx), 1, f);
+    std::fwrite(&primCount, sizeof(primCount), 1, f);
+    for (int i = 0; i < 2; ++i) {
+        vj::Primitive p = makePrim(200 + i);
+        uint8_t kind        = static_cast<uint8_t>(p.kind);
+        uint8_t textured    = p.textured ? 1 : 0;
+        uint8_t vertexCount = static_cast<uint8_t>(p.vertices.size());
+        uint8_t pad         = 0;
+        std::fwrite(&kind, 1, 1, f);
+        std::fwrite(&textured, 1, 1, f);
+        std::fwrite(&vertexCount, 1, 1, f);
+        std::fwrite(&pad, 1, 1, f);
+        uint64_t tag = p.hostTag;
+        std::fwrite(&tag, sizeof(tag), 1, f);
+        for (const auto& v : p.vertices) {
+            std::fwrite(&v.x, sizeof(v.x), 1, f);
+            std::fwrite(&v.y, sizeof(v.y), 1, f);
+            std::fwrite(&v.u, sizeof(v.u), 1, f);
+            std::fwrite(&v.v, sizeof(v.v), 1, f);
+            std::fwrite(&v.r, 1, 1, f);
+            std::fwrite(&v.g, 1, 1, f);
+            std::fwrite(&v.b, 1, 1, f);
+            std::fwrite(&v.a, 1, 1, f);
+        }
+    }
+    uint8_t endMarker[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    std::fwrite(endMarker, 1, 4, f);
+    std::fclose(f);
+
+    // Now read with the v2-aware reader; v1 path should match.
+    vj::PrimitiveStreamReader r;
+    assert(r.open(path));
+    assert(r.streamVersion() == 1);
+    vj::EchoFrame fr;
+    assert(r.readNextFrame(fr));
+    assert(fr.frameIndex == 7);
+    assert(fr.uploads.empty());
+    assert(fr.primitives.size() == 2);
+    assert(primEqual(fr.primitives[0], makePrim(200)));
+    assert(primEqual(fr.primitives[1], makePrim(201)));
+    assert(!r.readNextFrame(fr));
+    std::remove(path.c_str());
+}
+
 void test_ringbuffer_recordPrimitive_before_beginFrame_is_noop() {
     vj::PrimitiveRingbuffer rb(2);
     rb.recordPrimitive(makePrim(0));  // should be silently ignored
@@ -203,6 +311,8 @@ int main() {
     test_reader_rejects_bad_magic();
     test_ringbuffer_basic_push_and_getDelayed();
     test_ringbuffer_drops_oldest_at_capacity();
+    test_v2_roundtrip_with_uploads();
+    test_v1_backward_compat();
     test_ringbuffer_recordPrimitive_before_beginFrame_is_noop();
     std::fprintf(stderr, "[test_primitive_stream] OK\n");
     return 0;
