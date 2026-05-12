@@ -21,8 +21,9 @@ vj::Primitive makePrim(int seed) {
     p.kind     = (seed % 3 == 0) ? vj::PrimitiveKind::Triangle
                   : (seed % 3 == 1) ? vj::PrimitiveKind::Quad
                                     : vj::PrimitiveKind::Sprite;
-    p.textured = (seed % 2) != 0;
-    p.hostTag  = static_cast<uint64_t>(seed) * 1000003ull;
+    p.textured  = (seed % 2) != 0;
+    p.blendMode = static_cast<vj::BlendMode>(seed % 5);
+    p.hostTag   = static_cast<uint64_t>(seed) * 1000003ull;
     const int vc = (p.kind == vj::PrimitiveKind::Quad) ? 4 : 3;
     p.vertices.resize(static_cast<size_t>(vc));
     for (int i = 0; i < vc; ++i) {
@@ -42,6 +43,7 @@ vj::Primitive makePrim(int seed) {
 bool primEqual(const vj::Primitive& a, const vj::Primitive& b) {
     if (a.kind != b.kind) return false;
     if (a.textured != b.textured) return false;
+    if (a.blendMode != b.blendMode) return false;
     if (a.hostTag != b.hostTag) return false;
     if (a.vertices.size() != b.vertices.size()) return false;
     for (size_t i = 0; i < a.vertices.size(); ++i) {
@@ -289,8 +291,14 @@ void test_v1_backward_compat() {
     assert(fr.frameIndex == 7);
     assert(fr.uploads.empty());
     assert(fr.primitives.size() == 2);
-    assert(primEqual(fr.primitives[0], makePrim(200)));
-    assert(primEqual(fr.primitives[1], makePrim(201)));
+    // v1 files don't carry blendMode (the byte where it lives was a
+    // padding byte written as 0). Expected values reflect that.
+    auto expected0 = makePrim(200);
+    auto expected1 = makePrim(201);
+    expected0.blendMode = vj::BlendMode::Opaque;
+    expected1.blendMode = vj::BlendMode::Opaque;
+    assert(primEqual(fr.primitives[0], expected0));
+    assert(primEqual(fr.primitives[1], expected1));
     assert(!r.readNextFrame(fr));
     std::remove(path.c_str());
 }

@@ -66,11 +66,14 @@ void PrimitiveStreamWriter::writePrimitive(const Primitive& p) {
     const uint8_t kind        = static_cast<uint8_t>(p.kind);
     const uint8_t textured    = p.textured ? 1 : 0;
     const uint8_t vertexCount = static_cast<uint8_t>(p.vertices.size());
-    const uint8_t pad         = 0;
+    // Previously a padding byte; from now on stores blendMode. Old
+    // readers see this as 0 (Opaque) when reading files we write here
+    // and we read 0 as Opaque from older files — round-trip safe.
+    const uint8_t blendMode   = static_cast<uint8_t>(p.blendMode);
     writeRaw(m_file, kind);
     writeRaw(m_file, textured);
     writeRaw(m_file, vertexCount);
-    writeRaw(m_file, pad);
+    writeRaw(m_file, blendMode);
     const uint64_t tag = p.hostTag;
     writeRaw(m_file, tag);
     for (const auto& v : p.vertices) {
@@ -144,16 +147,17 @@ void PrimitiveStreamReader::close() {
 namespace {
 
 bool readPrimitiveBody(std::FILE* f, Primitive& p) {
-    uint8_t kind, textured, vertexCount, pad;
+    uint8_t kind, textured, vertexCount, blendOrPad;
     uint64_t tag;
     if (!readRaw(f, kind))        return false;
     if (!readRaw(f, textured))    return false;
     if (!readRaw(f, vertexCount)) return false;
-    if (!readRaw(f, pad))         return false;
+    if (!readRaw(f, blendOrPad))  return false;
     if (!readRaw(f, tag))         return false;
-    p.kind     = static_cast<PrimitiveKind>(kind);
-    p.textured = textured != 0;
-    p.hostTag  = tag;
+    p.kind      = static_cast<PrimitiveKind>(kind);
+    p.textured  = textured != 0;
+    p.blendMode = static_cast<BlendMode>(blendOrPad);
+    p.hostTag   = tag;
     p.vertices.resize(vertexCount);
     for (uint8_t v = 0; v < vertexCount; ++v) {
         auto& vv = p.vertices[v];
