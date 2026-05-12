@@ -20,6 +20,7 @@ add_library(vj STATIC
     vj/src/PrimitiveInterceptor.cpp
     vj/src/DebugOverlay.cpp
     vj/src/AutoMode.cpp
+    vj/src/FilterPresetBank.cpp
 )
 target_include_directories(vj PUBLIC vj/include)
 
@@ -55,6 +56,7 @@ if(VJ_BUILD_TESTS)
         vj/tests/test_random_controller.cpp
         vj/tests/test_primitive_interceptor_filter.cpp
         vj/tests/test_auto_mode.cpp
+        vj/tests/test_filter_preset_bank.cpp
     )
     foreach(test_src ${VJ_TEST_SOURCES})
         get_filename_component(test_name ${test_src} NAME_WE)
