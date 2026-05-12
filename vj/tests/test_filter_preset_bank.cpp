@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 #include "vj/FilterPresetBank.h"
 #include "vj/Params.h"
@@ -104,6 +105,62 @@ void test_everyN_lerps_then_rounds() {
     assert(m.everyN == 4 || m.everyN == 3);  // tolerance for rounding direction
 }
 
+void test_save_load_roundtrip() {
+    vj::FilterPresetBank a;
+    for (int i = 0; i < vj::FilterPresetBank::slotCount(); ++i) {
+        a.slot(i).name = "slot-" + std::to_string(i);
+        a.slot(i).params.texturedOnly = (i % 2) != 0;
+        a.slot(i).params.minArea  = static_cast<float>(i) * 100.0f;
+        a.slot(i).params.maxArea  = static_cast<float>(i) * 200.0f;
+        a.slot(i).params.regionX0 = static_cast<float>(i) + 0.5f;
+        a.slot(i).params.regionY0 = static_cast<float>(i) + 1.5f;
+        a.slot(i).params.regionX1 = static_cast<float>(i) + 2.5f;
+        a.slot(i).params.regionY1 = static_cast<float>(i) + 3.5f;
+        a.slot(i).params.everyN   = i % 16;
+    }
+    const std::string path = "test_fpb_roundtrip.bin";
+    assert(a.saveTo(path));
+
+    vj::FilterPresetBank b;
+    assert(b.loadFrom(path));
+    for (int i = 0; i < vj::FilterPresetBank::slotCount(); ++i) {
+        const auto& x = a.slot(i);
+        const auto& y = b.slot(i);
+        assert(x.name == y.name);
+        assert(x.params.texturedOnly == y.params.texturedOnly);
+        assert(nearlyEqual(x.params.minArea,  y.params.minArea));
+        assert(nearlyEqual(x.params.maxArea,  y.params.maxArea));
+        assert(nearlyEqual(x.params.regionX0, y.params.regionX0));
+        assert(nearlyEqual(x.params.regionY0, y.params.regionY0));
+        assert(nearlyEqual(x.params.regionX1, y.params.regionX1));
+        assert(nearlyEqual(x.params.regionY1, y.params.regionY1));
+        assert(x.params.everyN == y.params.everyN);
+    }
+    std::remove(path.c_str());
+}
+
+void test_load_missing_file_keeps_bank() {
+    vj::FilterPresetBank bank;
+    bank.slot(0).name = "preserved";
+    assert(!bank.loadFrom("definitely-not-a-real-path-9b2c.bin"));
+    assert(bank.slot(0).name == "preserved");
+}
+
+void test_load_bad_magic_keeps_bank() {
+    const std::string path = "test_fpb_badmagic.bin";
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    assert(f);
+    const char junk[12] = {'N','O','P','E','0','0','0','0', 1,0,0,0};
+    std::fwrite(junk, 1, 12, f);
+    std::fclose(f);
+
+    vj::FilterPresetBank bank;
+    bank.slot(5).name = "preserved";
+    assert(!bank.loadFrom(path));
+    assert(bank.slot(5).name == "preserved");
+    std::remove(path.c_str());
+}
+
 void test_slot_mutation_persists() {
     vj::FilterPresetBank bank;
     bank.slot(3).name = "BG only";
@@ -126,6 +183,9 @@ int main() {
     test_interpolation_midway_lerps_numeric();
     test_bool_snaps_at_midpoint();
     test_everyN_lerps_then_rounds();
+    test_save_load_roundtrip();
+    test_load_missing_file_keeps_bank();
+    test_load_bad_magic_keeps_bank();
     test_slot_mutation_persists();
     std::fprintf(stderr, "[test_filter_preset_bank] OK\n");
     return 0;

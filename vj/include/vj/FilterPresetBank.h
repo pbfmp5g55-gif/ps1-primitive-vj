@@ -47,6 +47,17 @@ class FilterPresetBank {
     // Snap variant — returns slot(slotForCC(cc)).params exactly.
     const FilterParams& selectSnap(int cc) const;
 
+    // Serialize the whole bank (slot names + FilterParams) to a binary file.
+    // Format: magic "VJPSET01" + version[4] + slotCount[4] + per slot
+    // (nameLen[4] + name + texturedOnly[1] + _pad[3] + 6 floats + everyN[4]).
+    // Returns false on filesystem failure.
+    bool saveTo(const std::string& path) const;
+
+    // Load a bank from a file written by saveTo(). On success, overwrites all
+    // 16 slots. On failure (missing file / bad format / version mismatch),
+    // leaves the bank unchanged and returns false.
+    bool loadFrom(const std::string& path);
+
    private:
     std::array<FilterPreset, kSlotCount> m_slots;
 };
