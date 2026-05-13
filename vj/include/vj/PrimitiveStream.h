@@ -36,8 +36,8 @@ struct EchoFrame {
 // found by sequential scan, no global index required.
 //
 //   Header (12 bytes):
-//     magic[8]   = "VJREC001" (v1) or "VJREC002" (v2)
-//     version[4] = 1 or 2
+//     magic[8]   = "VJREC001" | "VJREC002" | "VJREC003"
+//     version[4] = 1 | 2 | 3
 //
 // --- v1 (legacy, read-only support) ---
 //   Per frame:
@@ -51,17 +51,25 @@ struct EchoFrame {
 //         x[4] y[4] u[4] v[4]
 //         r[1] g[1] b[1] a[1]
 //
-// --- v2 (current, primitives + VRAM uploads interleaved) ---
+// --- v2 (read-only support, no inline palette) ---
 //   Per frame:
 //     marker[4]    = 0xFE 0xFE 0xFE 0xFE
 //     frameIndex[4]
 //     recordCount[4]
 //     records[recordCount]:
 //       type[1]        (0=Primitive, 1=VRAMUpload)
-//       if type == 0: same as v1 primitive layout (minus the no-longer-
-//                     ambiguous type byte) — kind[1] textured[1]
-//                     vertexCount[1] _pad[1] hostTag[8] + vertices[].
+//       if type == 0: kind[1] textured[1] vertexCount[1] blendMode[1]
+//                     hostTag[8] + vertices[].
 //       if type == 1: x[2] y[2] w[2] h[2] data[w*h*2]
+//
+// --- v3 (current, primitives carry inline CLUT palette) ---
+//   Same as v2 except the Primitive body has a trailing palette payload:
+//     paletteKind[1]   (0=none, 1=palette16, 2=palette256)
+//     if paletteKind == 1: palette[16] of uint16  (4bpp CLUT, 5/5/5/M)
+//     if paletteKind == 2: palette[256] of uint16 (8bpp CLUT, 5/5/5/M)
+//   v2 readers cannot parse v3 files (the new payload shifts subsequent
+//   record offsets); we only guarantee forward compatibility (the v3
+//   reader transparently reads v1/v2/v3 files).
 //
 //   End marker (4 bytes): 0xFF 0xFF 0xFF 0xFF
 
@@ -108,7 +116,8 @@ class PrimitiveStreamReader {
     bool isOpen() const { return m_file != nullptr; }
     void close();
 
-    // 1 (legacy primitive-only stream) or 2 (current, with VRAM uploads).
+    // 1 (legacy primitive-only stream), 2 (with VRAM uploads),
+    // or 3 (with inline CLUT palette per primitive).
     int streamVersion() const { return m_streamVersion; }
 
     // Read the next frame block. Returns true on success, false on EOF or

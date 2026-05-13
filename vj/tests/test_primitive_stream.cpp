@@ -58,6 +58,10 @@ bool primEqual(const vj::Primitive& a, const vj::Primitive& b) {
         if (va.b != vb.b) return false;
         if (va.a != vb.a) return false;
     }
+    if (a.palette.size() != b.palette.size()) return false;
+    for (size_t i = 0; i < a.palette.size(); ++i) {
+        if (a.palette[i] != b.palette[i]) return false;
+    }
     return true;
 }
 
@@ -189,8 +193,12 @@ void test_ringbuffer_drops_oldest_at_capacity() {
     assert(rb.getDelayed(3) == nullptr);
 }
 
-void test_v2_roundtrip_with_uploads() {
-    const std::string path = tempPath("v2uploads");
+void test_uploads_and_primitives_roundtrip() {
+    // Writer emits v3 now, but the upload/primitive interleaving and
+    // wire-format guarantees we care about here haven't changed; this is
+    // really a structural test that VRAMUpload + Primitive records share
+    // the same per-frame stream correctly.
+    const std::string path = tempPath("v3uploads");
     {
         vj::PrimitiveStreamWriter w;
         assert(w.open(path));
@@ -211,7 +219,7 @@ void test_v2_roundtrip_with_uploads() {
     {
         vj::PrimitiveStreamReader r;
         assert(r.open(path));
-        assert(r.streamVersion() == 2);
+        assert(r.streamVersion() == 3);
 
         vj::EchoFrame f0;
         assert(r.readNextFrame(f0));
@@ -303,6 +311,101 @@ void test_v1_backward_compat() {
     std::remove(path.c_str());
 }
 
+void test_v3_inline_palette_roundtrip() {
+    const std::string path = tempPath("v3palette");
+    // Build a 16-entry and a 256-entry palette with distinctive content
+    // so trunc/swap bugs in the wire format would show up.
+    std::vector<uint16_t> pal16(16);
+    for (size_t i = 0; i < pal16.size(); ++i) {
+        pal16[i] = static_cast<uint16_t>(0x1000 + i * 73);
+    }
+    std::vector<uint16_t> pal256(256);
+    for (size_t i = 0; i < pal256.size(); ++i) {
+        pal256[i] = static_cast<uint16_t>(0xA000 ^ (i * 257));
+    }
+
+    vj::Primitive p4bpp = makePrim(401);
+    p4bpp.palette       = pal16;
+    vj::Primitive p8bpp = makePrim(402);
+    p8bpp.palette       = pal256;
+    vj::Primitive pNone = makePrim(403);
+    // pNone has no palette (untextured / direct-colour).
+
+    {
+        vj::PrimitiveStreamWriter w;
+        assert(w.open(path));
+        w.beginFrame(0, 3);
+        w.writePrimitive(p4bpp);
+        w.writePrimitive(p8bpp);
+        w.writePrimitive(pNone);
+        w.close();
+    }
+    {
+        vj::PrimitiveStreamReader r;
+        assert(r.open(path));
+        assert(r.streamVersion() == 3);
+        vj::EchoFrame ef;
+        assert(r.readNextFrame(ef));
+        assert(ef.primitives.size() == 3);
+        assert(primEqual(ef.primitives[0], p4bpp));
+        assert(primEqual(ef.primitives[1], p8bpp));
+        assert(primEqual(ef.primitives[2], pNone));
+        assert(ef.primitives[0].palette.size() == 16);
+        assert(ef.primitives[1].palette.size() == 256);
+        assert(ef.primitives[2].palette.empty());
+        assert(!r.readNextFrame(ef));
+    }
+    std::remove(path.c_str());
+}
+
+void test_v3_invalid_palette_kind_rejected() {
+    // Hand-craft a v3 file whose paletteKind byte is 99 (invalid).
+    // The reader must reject it rather than e.g. reading garbage entries.
+    const std::string path = tempPath("v3badpal");
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    assert(f);
+    std::fwrite("VJREC003", 1, 8, f);
+    uint32_t version = 3;
+    std::fwrite(&version, sizeof(version), 1, f);
+    uint8_t marker[4] = {0xFE, 0xFE, 0xFE, 0xFE};
+    std::fwrite(marker, 1, 4, f);
+    uint32_t frameIdx  = 0;
+    uint32_t recordCnt = 1;
+    std::fwrite(&frameIdx,  sizeof(frameIdx),  1, f);
+    std::fwrite(&recordCnt, sizeof(recordCnt), 1, f);
+    // Record: Primitive type, minimal body, invalid paletteKind.
+    uint8_t recType = 0;
+    std::fwrite(&recType, 1, 1, f);
+    uint8_t kind = 0, textured = 0, vc = 3, blend = 0;
+    std::fwrite(&kind, 1, 1, f);
+    std::fwrite(&textured, 1, 1, f);
+    std::fwrite(&vc, 1, 1, f);
+    std::fwrite(&blend, 1, 1, f);
+    uint64_t tag = 0;
+    std::fwrite(&tag, sizeof(tag), 1, f);
+    for (int i = 0; i < 3; ++i) {
+        float zero = 0.0f;
+        std::fwrite(&zero, sizeof(zero), 1, f);
+        std::fwrite(&zero, sizeof(zero), 1, f);
+        std::fwrite(&zero, sizeof(zero), 1, f);
+        std::fwrite(&zero, sizeof(zero), 1, f);
+        uint8_t zz = 0;
+        std::fwrite(&zz, 1, 1, f);
+        std::fwrite(&zz, 1, 1, f);
+        std::fwrite(&zz, 1, 1, f);
+        std::fwrite(&zz, 1, 1, f);
+    }
+    uint8_t badPaletteKind = 99;
+    std::fwrite(&badPaletteKind, 1, 1, f);
+    std::fclose(f);
+
+    vj::PrimitiveStreamReader r;
+    assert(r.open(path));
+    vj::EchoFrame ef;
+    assert(!r.readNextFrame(ef));  // must reject the malformed record
+    std::remove(path.c_str());
+}
+
 void test_ringbuffer_recordPrimitive_before_beginFrame_is_noop() {
     vj::PrimitiveRingbuffer rb(2);
     rb.recordPrimitive(makePrim(0));  // should be silently ignored
@@ -319,8 +422,10 @@ int main() {
     test_reader_rejects_bad_magic();
     test_ringbuffer_basic_push_and_getDelayed();
     test_ringbuffer_drops_oldest_at_capacity();
-    test_v2_roundtrip_with_uploads();
+    test_uploads_and_primitives_roundtrip();
     test_v1_backward_compat();
+    test_v3_inline_palette_roundtrip();
+    test_v3_invalid_palette_kind_rejected();
     test_ringbuffer_recordPrimitive_before_beginFrame_is_noop();
     std::fprintf(stderr, "[test_primitive_stream] OK\n");
     return 0;

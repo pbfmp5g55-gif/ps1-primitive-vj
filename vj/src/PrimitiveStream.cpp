@@ -9,12 +9,21 @@ namespace {
 
 constexpr char     kMagicV1[8] = {'V', 'J', 'R', 'E', 'C', '0', '0', '1'};
 constexpr char     kMagicV2[8] = {'V', 'J', 'R', 'E', 'C', '0', '0', '2'};
+constexpr char     kMagicV3[8] = {'V', 'J', 'R', 'E', 'C', '0', '0', '3'};
 constexpr uint32_t kVersionV1  = 1;
 constexpr uint32_t kVersionV2  = 2;
+constexpr uint32_t kVersionV3  = 3;
 constexpr uint8_t  kFrameMarker[4] = {0xFE, 0xFE, 0xFE, 0xFE};
 constexpr uint8_t  kEndMarker[4]   = {0xFF, 0xFF, 0xFF, 0xFF};
 constexpr uint8_t  kRecPrim   = 0;
 constexpr uint8_t  kRecUpload = 1;
+
+// Palette payload tag in v3 primitive records. The size of the palette is
+// fully determined by this byte, so the reader can skip it without knowing
+// the texture bpp.
+constexpr uint8_t  kPaletteNone = 0;
+constexpr uint8_t  kPalette16   = 1;  // 4bpp CLUT, 16 colours
+constexpr uint8_t  kPalette256  = 2;  // 8bpp CLUT, 256 colours
 
 template <typename T>
 bool writeRaw(std::FILE* f, const T& v) {
@@ -38,9 +47,9 @@ bool PrimitiveStreamWriter::open(const std::string& path) {
     close();
     m_file = std::fopen(path.c_str(), "wb");
     if (!m_file) return false;
-    // Writer always emits v2; the reader handles both.
-    if (std::fwrite(kMagicV2, 1, 8, m_file) != 8) { close(); return false; }
-    if (!writeRaw(m_file, kVersionV2))            { close(); return false; }
+    // Writer always emits v3; reader handles v1/v2/v3.
+    if (std::fwrite(kMagicV3, 1, 8, m_file) != 8) { close(); return false; }
+    if (!writeRaw(m_file, kVersionV3))            { close(); return false; }
     return true;
 }
 
@@ -86,6 +95,23 @@ void PrimitiveStreamWriter::writePrimitive(const Primitive& p) {
         writeRaw(m_file, v.b);
         writeRaw(m_file, v.a);
     }
+    // v3 inline palette payload. Sizes other than 0/16/256 are coerced
+    // to None so the file stays well-formed even if a caller hands us
+    // a malformed Primitive.
+    uint8_t paletteKind = kPaletteNone;
+    size_t  expectedEntries = 0;
+    if (p.palette.size() == 16) {
+        paletteKind     = kPalette16;
+        expectedEntries = 16;
+    } else if (p.palette.size() == 256) {
+        paletteKind     = kPalette256;
+        expectedEntries = 256;
+    }
+    writeRaw(m_file, paletteKind);
+    if (expectedEntries > 0) {
+        std::fwrite(p.palette.data(), sizeof(uint16_t), expectedEntries,
+                    m_file);
+    }
 }
 
 void PrimitiveStreamWriter::writeVRAMUpload(const VRAMUpload& u) {
@@ -128,10 +154,11 @@ bool PrimitiveStreamReader::open(const std::string& path) {
     if (std::fread(magic, 1, 8, m_file) != 8) { close(); return false; }
     const bool isV1 = std::memcmp(magic, kMagicV1, 8) == 0;
     const bool isV2 = std::memcmp(magic, kMagicV2, 8) == 0;
-    if (!isV1 && !isV2) { close(); return false; }
+    const bool isV3 = std::memcmp(magic, kMagicV3, 8) == 0;
+    if (!isV1 && !isV2 && !isV3) { close(); return false; }
     uint32_t version = 0;
     if (!readRaw(m_file, version)) { close(); return false; }
-    const uint32_t want = isV2 ? kVersionV2 : kVersionV1;
+    const uint32_t want = isV3 ? kVersionV3 : isV2 ? kVersionV2 : kVersionV1;
     if (version != want)            { close(); return false; }
     m_streamVersion = static_cast<int>(version);
     return true;
@@ -146,7 +173,7 @@ void PrimitiveStreamReader::close() {
 
 namespace {
 
-bool readPrimitiveBody(std::FILE* f, Primitive& p) {
+bool readPrimitiveBody(std::FILE* f, Primitive& p, int version) {
     uint8_t kind, textured, vertexCount, blendOrPad;
     uint64_t tag;
     if (!readRaw(f, kind))        return false;
@@ -169,6 +196,22 @@ bool readPrimitiveBody(std::FILE* f, Primitive& p) {
         if (!readRaw(f, vv.g)) return false;
         if (!readRaw(f, vv.b)) return false;
         if (!readRaw(f, vv.a)) return false;
+    }
+    if (version >= 3) {
+        uint8_t paletteKind = 0;
+        if (!readRaw(f, paletteKind)) return false;
+        size_t entries = 0;
+        if (paletteKind == kPalette16)        entries = 16;
+        else if (paletteKind == kPalette256)  entries = 256;
+        else if (paletteKind != kPaletteNone) return false;
+        p.palette.resize(entries);
+        if (entries > 0 &&
+            std::fread(p.palette.data(), sizeof(uint16_t), entries, f)
+                != entries) {
+            return false;
+        }
+    } else {
+        p.palette.clear();
     }
     return true;
 }
@@ -213,18 +256,20 @@ bool PrimitiveStreamReader::readNextFrame(EchoFrame& out) {
         // v1: records are all primitives, no type byte.
         out.primitives.resize(recordCount);
         for (uint32_t i = 0; i < recordCount; ++i) {
-            if (!readPrimitiveBody(m_file, out.primitives[i])) return false;
+            if (!readPrimitiveBody(m_file, out.primitives[i],
+                                   m_streamVersion))
+                return false;
         }
         return true;
     }
 
-    // v2: typed records.
+    // v2 / v3: typed records.
     for (uint32_t i = 0; i < recordCount; ++i) {
         uint8_t type = 0;
         if (!readRaw(m_file, type)) return false;
         if (type == kRecPrim) {
             Primitive p;
-            if (!readPrimitiveBody(m_file, p)) return false;
+            if (!readPrimitiveBody(m_file, p, m_streamVersion)) return false;
             out.primitives.push_back(std::move(p));
         } else if (type == kRecUpload) {
             VRAMUpload u;
