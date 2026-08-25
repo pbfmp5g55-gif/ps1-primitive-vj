@@ -9,19 +9,32 @@ UVs, vertex colors, draw order, and per-primitive drop decisions.
 
 ## Status
 
+All six phases are wired and running on Windows. Development has been idle
+since **2026-05-13**; it stopped at a clean point (no unmerged branches,
+no open issues). The consumer that actually gets used is the mixer,
+[ps1-vj-mix](https://github.com/pbfmp5g55-gif/ps1-vj-mix) — see its
+`HANDOVER_ja.md` for where the project as a whole is.
+
 | Phase | Description | State |
 |---|---|---|
-| 0 | Repo / submodule setup | ✅ |
-| 1 | OpenBIOS fetch script | ✅ |
-| 2 | MIDI input (RtMidi) | ⬜ planned |
-| 3 | Primitive logging hook | ✅ verified in fork |
-| 4 | Geometry / chance / drop / color effects | ✅ wired, env-var-tunable |
-| 5 | Texture / missing / color refinements | partial |
-| 6 | Safety limiter integration | partial (libvj side complete) |
+| 0 | Repo / submodule setup | done |
+| 1 | OpenBIOS fetch script | done |
+| 2 | MIDI input (RtMidi) | done — `RtMidiController`, opt-in via `-DVJ_ENABLE_RTMIDI=ON`; dynamic CC mapping + Learn helper |
+| 3 | Primitive logging hook | done — verified in the fork |
+| 4 | Geometry / chance / drop / color effects | done — all 8 params live, env-var- and MIDI-tunable |
+| 5 | Texture / missing / color refinements | done — UV offset, drop, per-vertex RGB in `PrimitiveInterceptor` |
+| 6 | Safety limiter integration | done — `lowMasterSafety` applied on `beginFrame` |
 
-The integrated emulator (libvj wired into PCSX-Redux) builds and runs end-to-end
-on Windows. Glitches are applied to live PS1 GPU primitives — characters /
-backgrounds / UI individually, *not* a post-process over the final framebuffer.
+Built on top of those, later work added: `AutoMode` LFO modulation,
+`FilterPresetBank` (region / area / textured-only filters, saved to file,
+MIDI-morphable), `PrimitiveStream` serialisation (format v3 — VRAM uploads
+and inline CLUT palettes), and per-primitive `BlendMode` for PS1
+semi-transparency.
+
+The integrated emulator (libvj wired into PCSX-Redux) builds and runs
+end-to-end on Windows. Glitches are applied to live PS1 GPU primitives —
+characters / backgrounds / UI individually, *not* a post-process over the
+final framebuffer.
 
 ## What's in this repo
 
@@ -135,10 +148,10 @@ or a game image you legally own:
 .\build\pcsx-redux.exe -bios .\bios\openbios.bin -iso my_game.bin -run
 ```
 
-## MIDI control (Phase 2, planned)
+## MIDI control
 
-When Phase 2 ships, the env vars above are replaced by 8 CC knobs (the env
-mechanism stays as a fallback / scripted-override path):
+Shipped. The env vars above still work as a fallback / scripted-override
+path; the default CC layout is:
 
 | CC | Name     | Role                                  |
 |---:|----------|---------------------------------------|
@@ -152,7 +165,8 @@ mechanism stays as a fallback / scripted-override path):
 | 27 | CHAOS    | Random-hold update rate / spike rate  |
 
 Curves: MASTER / CHANCE / CHAOS are linear; the rest use `x²` for fine control
-near zero.
+near zero. The mapping is not fixed — each target has a **Learn** button in
+the fork's VJ panel, so any CC can drive any param.
 
 ## Scope notes
 
